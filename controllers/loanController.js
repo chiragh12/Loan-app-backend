@@ -1,9 +1,21 @@
 import Loan from "../models/loanSchema.js";
+import User from "../models/userSchema.js";
 
 // Function to create a new loan
 export const createLoan = async (req, res) => {
   try {
     const { targetUserId, loanAmount } = req.body;
+
+    // Check if the user already has an active loan
+    const activeLoan = await Loan.findOne({
+      targetUserId,
+      loanReturnStatus: { $ne: "paid" },
+    });
+    if (activeLoan) {
+      return res
+        .status(400)
+        .send({ success: false, message: "User already has an active loan" });
+    }
 
     const loanDuration = 9; // 9 installments as told
 
@@ -23,17 +35,22 @@ export const createLoan = async (req, res) => {
         startDate.getFullYear(),
         startDate.getMonth() + i,
         13
-      ); // Set due date to the 12th day of each month
-      installments.push({ amount: installmentAmount, dueDate });
+      ); // Set due date to the 13th day of each month
+      installments.push({
+        amount: installmentAmount,
+        dueDate,
+        status: "unpaid",
+      });
     }
 
     const newLoan = new Loan({
       targetUserId,
       loanAmount,
-      totalLoanAmount: totalLoanAmount,
+      totalLoanAmount,
       startDate,
       endDate,
       installments,
+      loanReturnStatus: "unpaid",
     });
 
     await newLoan.save();
@@ -48,7 +65,6 @@ export const createLoan = async (req, res) => {
   }
 };
 
-// Function to get all loans
 // Function to get all loans with pagination
 export const getAllLoans = async (req, res) => {
   try {
@@ -161,10 +177,11 @@ export const returnLoan = async (req, res) => {
       } else {
         // Create a new installment cycle if it doesn't exist
         const newDueDate = new Date(nextInstallmentDueDate);
-        newDueDate.setMonth(newDueDate.getMonth() + 1); // Set due date to the next month's 12th day
+        newDueDate.setMonth(newDueDate.getMonth() + 1); // Set due date to the next month's 13th day
         loan.installments.push({
           amount: overdueInstallmentAmount,
           dueDate: newDueDate,
+          status: "unpaid",
         });
       }
     } else {
@@ -191,12 +208,23 @@ export const returnLoan = async (req, res) => {
   }
 };
 
-// Function to get loans by user's CNIC
 export const getLoansByCNIC = async (req, res) => {
   try {
     const { cnic } = req.params;
 
-    const loans = await Loan.find({ "targetUserId.cnic": cnic }).populate(
+    // Find the user by CNIC
+    const user = await User.findOne({ cnic });
+
+    if (!user) {
+      return res.status(200).send({
+        success: true,
+        loans: [],
+        message: `No user found with CNIC ${cnic}`,
+      });
+    }
+
+    // If user exists, fetch their loans
+    const loans = await Loan.find({ targetUserId: user._id }).populate(
       "targetUserId"
     );
 
@@ -206,28 +234,40 @@ export const getLoansByCNIC = async (req, res) => {
       message: `Loans for CNIC ${cnic} fetched Successfully`,
     });
   } catch (error) {
-    res.status(500).send({ message: "Server error", error: error.message });
+    res
+      .status(500)
+      .send({ success: false, message: "Server error", error: error.message });
   }
 };
 
-// Function to get loans by month
 export const getLoansByMonth = async (req, res) => {
   try {
     const { year, month } = req.params;
 
+    // Validate year
+    const parsedYear = parseInt(year);
+    if (isNaN(parsedYear) || parsedYear < 1900 || parsedYear > 3000) {
+      return res.status(400).send({ message: "Invalid year" });
+    }
+
+    // Validate month
+    const parsedMonth = parseInt(month);
+    if (isNaN(parsedMonth) || parsedMonth < 1 || parsedMonth > 12) {
+      return res.status(400).send({ message: "Invalid month" });
+    }
+
     // Create start and end date for the given month
-    const startDate = new Date(year, month - 1, 1); // Month is zero-based in JavaScript Date object
-    const endDate = new Date(year, month, 0); // Last day of the month
+    const startDate = new Date(parsedYear, parsedMonth - 1, 1); // Month is zero-based in JavaScript Date object
+    const endDate = new Date(parsedYear, parsedMonth, 0); // Last day of the month
 
     const loans = await Loan.find({
-      startDate: { $gte: startDate },
-      endDate: { $lte: endDate },
+      "installments.dueDate": { $gte: startDate, $lte: endDate },
     }).populate("targetUserId");
 
     res.status(200).send({
       success: true,
       loans,
-      message: `Loans for ${year}-${month} fetched Successfully`,
+      message: `Loans for ${parsedYear}-${parsedMonth} fetched successfully`,
     });
   } catch (error) {
     res.status(500).send({ message: "Server error", error: error.message });
