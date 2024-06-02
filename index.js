@@ -27,7 +27,7 @@ app.use("/api/v1/loans", loanRoutes);
 app.use("/api/v1/admin", adminRoutes);
 
 app.get("/", (req, res) => {
-  res.send("hello osam");
+  res.send("hello there is loan app");
 });
 
 const port = process.env.PORT;
